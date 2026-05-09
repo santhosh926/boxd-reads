@@ -1,10 +1,10 @@
 # BoxdReads
 
-V1 frontend for a tool that accepts a Letterboxd username, highlights highly rated movies that were adapted from books, and recommends those books plus similar reads.
+V1 app for a tool that accepts a Letterboxd username, imports public movie activity, and prepares highly rated movies for future book-adaptation matching.
 
-Flow: user enters Letterboxd username -> app finds highly rated films -> identifies book adaptations -> recommends books with explanations.
+Flow: user enters Letterboxd username -> app imports public Letterboxd activity -> app normalizes movie data -> future features identify book adaptations and recommendations.
 
-This version is intentionally frontend-only. It uses mocked results and does not include scraping, APIs, auth, a database, or LLM calls.
+This version includes a small server-side Letterboxd RSS import route. It does not include book matching, auth, a database, or LLM calls.
 
 ## Getting Started
 
@@ -27,14 +27,13 @@ Open `http://localhost:3000` in your browser.
 ## Current Scope
 
 - Landing page with Letterboxd username input
-- Submit button with loading state
-- Mocked results page at `/results/[username]`
-- Reusable `MovieCard`, `BookCard`, and `RecommendationCard` components
-- Typed mock data in `src/lib/mockData.ts`
+- Server-side Letterboxd import route at `/api/letterboxd/import`
+- Normalized movie parsing from public Letterboxd RSS
+- Results page with loading, success, empty, error, and development fallback states
+- Lightweight parser tests with Node's built-in test runner
 
 ## Future Work
 
-- Fetch public Letterboxd data
 - Detect movies based on books
 - Store analysis history
 - Generate personalized book recommendations
