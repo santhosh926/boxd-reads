@@ -8,20 +8,20 @@ export default function Home() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [validationMessage, setValidationMessage] = useState("");
 
   function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const cleanUsername = username.trim();
     if (!cleanUsername) {
+      setValidationMessage("Enter a Letterboxd username to import movies.");
       return;
     }
 
+    setValidationMessage("");
     setIsSubmitting(true);
-
-    window.setTimeout(() => {
-      router.push(`/results/${encodeURIComponent(cleanUsername)}`);
-    }, 700);
+    router.push(`/results/${encodeURIComponent(cleanUsername)}`);
   }
 
   return (
@@ -31,7 +31,7 @@ export default function Home() {
           BoxdReads
         </Link>
         <span className="rounded-full border border-ink/10 bg-white/60 px-3 py-1 text-sm text-ink/70">
-          V1 mockup
+          V1 import
         </span>
       </nav>
 
@@ -44,8 +44,8 @@ export default function Home() {
             Turn your favorite films into your next favorite books.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-ink/70">
-            Enter a Letterboxd username to preview the future flow: highly rated films,
-            source books, and adjacent recommendations.
+            Enter a public Letterboxd username to import movie activity and
+            prioritize the films you rated highest.
           </p>
 
           <form
@@ -59,37 +59,47 @@ export default function Home() {
               autoComplete="off"
               className="min-h-12 flex-1 rounded-md border border-ink/10 bg-paper px-4 text-base text-ink outline-none transition focus:border-moss focus:ring-4 focus:ring-moss/15"
               id="username"
-              onChange={(event) => setUsername(event.target.value)}
+              onChange={(event) => {
+                setUsername(event.target.value);
+                setValidationMessage("");
+              }}
               placeholder="letterboxd username"
               value={username}
             />
             <button
               className="min-h-12 rounded-md bg-ink px-6 text-base font-semibold text-white transition hover:bg-moss disabled:cursor-not-allowed disabled:bg-ink/45"
-              disabled={isSubmitting || !username.trim()}
+              disabled={isSubmitting}
               type="submit"
             >
-              {isSubmitting ? "Analyzing..." : "Find books"}
+              {isSubmitting ? "Importing..." : "Import movies"}
             </button>
           </form>
+          {validationMessage ? (
+            <p className="mt-3 text-sm font-medium text-clay">{validationMessage}</p>
+          ) : null}
         </div>
 
         <div className="rounded-lg border border-ink/10 bg-ink p-6 text-white shadow-soft">
           <div className="rounded-md bg-white/8 p-5">
-            <p className="text-sm uppercase tracking-[0.16em] text-wheat">Mock preview</p>
+            <p className="text-sm uppercase tracking-[0.16em] text-wheat">
+              Import preview
+            </p>
             <div className="mt-6 space-y-5">
-              {["Arrival", "No Country for Old Men", "Howl's Moving Castle"].map(
-                (title, index) => (
+              {[
+                "Fetch public activity",
+                "Normalize movie fields",
+                "Prioritize high ratings"
+              ].map((title, index) => (
                   <div className="flex items-center gap-4" key={title}>
                     <span className="flex h-11 w-11 items-center justify-center rounded-md bg-clay text-sm font-bold">
                       {index + 1}
                     </span>
                     <div>
                       <p className="font-semibold">{title}</p>
-                      <p className="text-sm text-white/60">Matched to a source book</p>
+                      <p className="text-sm text-white/60">Ready for recommendations</p>
                     </div>
                   </div>
-                )
-              )}
+                ))}
             </div>
           </div>
         </div>
