@@ -4,15 +4,20 @@ import {
   matchBookAdaptations,
   type BookAdaptationMatchResult
 } from "../src/lib/bookAdaptations";
-import {
-  searchGoogleBooksBySourceWork,
-  searchGoogleBooksByTitle
-} from "../src/lib/googleBooks";
 import type { Movie } from "../src/lib/letterboxd";
 import { clearLookupCaches } from "../src/lib/lookupCache";
 import {
-  findWikidataSourceWorksForMovie,
-  type WikidataSourceWork
+  searchOpenLibraryBySourceWork,
+  searchOpenLibraryByTitle,
+  type OpenLibraryBook
+} from "../src/lib/openLibrary";
+import type { SourceWork } from "../src/lib/sourceWorkTypes";
+import {
+  findWikipediaSourceWorksForMovie,
+  parseWikipediaBasedOnValue
+} from "../src/lib/wikipedia";
+import {
+  findWikidataSourceWorksForMovie
 } from "../src/lib/wikidata";
 
 beforeEach(() => {
@@ -27,17 +32,33 @@ function buildMovie(overrides: Partial<Movie>): Movie {
   };
 }
 
-function buildSourceWork(overrides: Partial<WikidataSourceWork>): WikidataSourceWork {
+function buildSourceWork(overrides: Partial<SourceWork>): SourceWork {
   return {
-    id: "Q7620415",
+    id: "wikipedia-43991244-story-of-your-life",
     title: "Story of Your Life",
     authors: ["Ted Chiang"],
     publishedDate: "1998-11-01",
     description: "1998 novella by Ted Chiang",
-    wikidataUrl: "https://www.wikidata.org/wiki/Q7620415",
-    filmId: "Q20382729",
+    sourceDataUrl: "https://en.wikipedia.org/wiki/Arrival_(film)",
+    sourceProvider: "wikipedia",
+    filmId: "43991244",
     filmTitle: "Arrival",
     filmYear: 2016,
+    ...overrides
+  };
+}
+
+function buildOpenLibraryBook(
+  overrides: Partial<OpenLibraryBook>
+): OpenLibraryBook {
+  return {
+    id: "OL6216050W",
+    title: "Stories of Your Life and Others",
+    authors: ["Ted Chiang"],
+    publishedDate: "2002",
+    goodreadsId: "223380",
+    goodreadsUrl: "https://www.goodreads.com/book/show/223380",
+    isGoodreadsSearchFallback: false,
     ...overrides
   };
 }
@@ -49,45 +70,48 @@ function firstMatch(result: BookAdaptationMatchResult) {
 }
 
 describe("matchBookAdaptations", () => {
-  it("checks source metadata before searching Google Books", async () => {
+  it("checks source metadata before searching Open Library", async () => {
     const result = await matchBookAdaptations([buildMovie({ title: "Blade Runner" })], {
       findSourceWorks: async () => [
         buildSourceWork({
-          id: "Q203237",
+          id: "wikipedia-123-androids",
           title: "Do Androids Dream of Electric Sheep?",
           authors: ["Philip K. Dick"],
           publishedDate: "1968"
         })
       ],
       searchBooks: async () => [
-        {
-          id: "androids",
+        buildOpenLibraryBook({
+          id: "OL203237W",
           title: "Do Androids Dream of Electric Sheep?",
           authors: ["Philip K. Dick"],
-          publishedDate: "1996"
-        }
+          publishedDate: "1996",
+          goodreadsUrl: "https://www.goodreads.com/book/show/7082"
+        })
       ]
     });
     const match = firstMatch(result);
 
     assert.equal(result.unmatchedCount, 0);
     assert.equal(result.sourceLookupCount, 1);
-    assert.equal(result.googleBooksSearchCount, 1);
+    assert.equal(result.bookLookupCount, 1);
     assert.equal(result.adaptedMovieCount, 1);
     assert.equal(match.adaptation.sourceTitle, "Do Androids Dream of Electric Sheep?");
     assert.equal(match.adaptation.bookTitle, "Do Androids Dream of Electric Sheep?");
     assert.equal(match.adaptation.bookAuthor, "Philip K. Dick");
     assert.equal(match.adaptation.bookYear, 1968);
+    assert.equal(match.adaptation.goodreadsUrl, "https://www.goodreads.com/book/show/7082");
+    assert.equal(match.adaptation.sourceDataUrl, "https://en.wikipedia.org/wiki/Arrival_(film)");
     assert.equal(match.confidence, "high");
-    assert.equal(match.matchedOn, "wikidata-source-title-author");
+    assert.equal(match.matchedOn, "source-title-author");
   });
 
-  it("does not search Google Books when a movie has no book-adaptation source", async () => {
-    let googleBooksCalls = 0;
+  it("does not search books when a movie has no book-adaptation source", async () => {
+    let bookLookupCalls = 0;
     const result = await matchBookAdaptations([buildMovie({ title: "Original Movie" })], {
       findSourceWorks: async () => [],
       searchBooks: async () => {
-        googleBooksCalls += 1;
+        bookLookupCalls += 1;
         return [];
       }
     });
@@ -95,22 +119,21 @@ describe("matchBookAdaptations", () => {
     assert.equal(result.matches.length, 0);
     assert.equal(result.unmatchedCount, 1);
     assert.equal(result.sourceLookupCount, 1);
-    assert.equal(result.googleBooksSearchCount, 0);
+    assert.equal(result.bookLookupCount, 0);
     assert.equal(result.adaptedMovieCount, 0);
-    assert.equal(googleBooksCalls, 0);
+    assert.equal(bookLookupCalls, 0);
   });
 
-  it("matches source stories inside containing Google Books volumes", async () => {
+  it("matches source stories inside containing Open Library volumes", async () => {
     const result = await matchBookAdaptations([buildMovie({ title: "Arrival" })], {
       findSourceWorks: async () => [buildSourceWork({ title: "Story of Your Life" })],
       searchBooks: async () => [
-        {
-          id: "stories",
+        buildOpenLibraryBook({
           title: "Stories of Your Life and Others",
           authors: ["Ted Chiang"],
           description:
             "A collection including Story of Your Life, the novella adapted into Arrival."
-        }
+        })
       ]
     });
     const match = firstMatch(result);
@@ -118,7 +141,48 @@ describe("matchBookAdaptations", () => {
     assert.equal(match.adaptation.sourceTitle, "Story of Your Life");
     assert.equal(match.adaptation.bookTitle, "Stories of Your Life and Others");
     assert.equal(match.confidence, "medium");
-    assert.equal(match.matchedOn, "wikidata-source-containing-volume");
+    assert.equal(match.matchedOn, "source-containing-volume");
+  });
+
+  it("rejects Open Library title mismatches", async () => {
+    const result = await matchBookAdaptations([buildMovie({ title: "Dune" })], {
+      findSourceWorks: async () => [
+        buildSourceWork({
+          title: "Dune",
+          authors: ["Frank Herbert"]
+        })
+      ],
+      searchBooks: async () => [
+        buildOpenLibraryBook({
+          title: "Foundation",
+          authors: ["Isaac Asimov"]
+        })
+      ]
+    });
+
+    assert.equal(result.matches.length, 0);
+    assert.equal(result.unmatchedCount, 1);
+  });
+
+  it("keeps a source-title match when the Open Library author differs", async () => {
+    const result = await matchBookAdaptations([buildMovie({ title: "Dune" })], {
+      findSourceWorks: async () => [
+        buildSourceWork({
+          title: "Dune",
+          authors: ["Frank Herbert"]
+        })
+      ],
+      searchBooks: async () => [
+        buildOpenLibraryBook({
+          title: "Dune",
+          authors: ["Brian Herbert"]
+        })
+      ]
+    });
+    const match = firstMatch(result);
+
+    assert.equal(match.confidence, "high");
+    assert.equal(match.matchedOn, "source-title");
   });
 
   it("returns unmatched movie counts for mixed source results", async () => {
@@ -132,7 +196,7 @@ describe("matchBookAdaptations", () => {
           movie.title === "Dune"
             ? [
                 buildSourceWork({
-                  id: "Q190192",
+                  id: "wikipedia-100-dune",
                   title: "Dune",
                   authors: ["Frank Herbert"],
                   publishedDate: "1965"
@@ -140,18 +204,18 @@ describe("matchBookAdaptations", () => {
               ]
             : [],
         searchBooks: async () => [
-          {
-            id: "dune",
+          buildOpenLibraryBook({
+            id: "OL893415W",
             title: "Dune",
             authors: ["Frank Herbert"]
-          }
+          })
         ]
       }
     );
 
     assert.equal(result.totalMovies, 2);
     assert.equal(result.sourceLookupCount, 2);
-    assert.equal(result.googleBooksSearchCount, 1);
+    assert.equal(result.bookLookupCount, 1);
     assert.equal(result.adaptedMovieCount, 1);
     assert.equal(result.matches.length, 1);
     assert.equal(result.unmatchedCount, 1);
@@ -169,7 +233,7 @@ describe("matchBookAdaptations", () => {
       unmatchedMovies: [],
       unmatchedCount: 0,
       sourceLookupCount: 0,
-      googleBooksSearchCount: 0,
+      bookLookupCount: 0,
       adaptedMovieCount: 0,
       searchedCount: 0,
       totalMovies: 0
@@ -186,124 +250,262 @@ describe("matchBookAdaptations", () => {
     assert.equal(result.matches.length, 0);
     assert.equal(result.unmatchedCount, 1);
     assert.equal(result.sourceLookupCount, 0);
-    assert.equal(result.googleBooksSearchCount, 0);
+    assert.equal(result.bookLookupCount, 0);
     assert.equal(
       result.lookupError,
       "Adaptation lookup failed before every imported movie could be searched."
     );
   });
 
-  it("stops searching and returns a lookup error when Google Books fails", async () => {
+  it("stops searching and returns a lookup error when Open Library fails", async () => {
     const result = await matchBookAdaptations([buildMovie({ title: "Arrival" })], {
       findSourceWorks: async () => [buildSourceWork({ title: "Story of Your Life" })],
       searchBooks: async () => {
-        throw new Error("Google Books went sideways");
+        throw new Error("Open Library went sideways");
       }
     });
 
     assert.equal(result.matches.length, 0);
     assert.equal(result.unmatchedCount, 1);
     assert.equal(result.sourceLookupCount, 1);
-    assert.equal(result.googleBooksSearchCount, 0);
+    assert.equal(result.bookLookupCount, 0);
     assert.equal(
       result.lookupError,
-      "Adaptation lookup failed before every imported movie could be searched."
+      "Showing partial results after 1 source checks. Adaptation lookup failed before every imported movie could be searched."
     );
   });
 });
 
-describe("searchGoogleBooksByTitle", () => {
-  it("requests Google Books volumes by intitle query and normalizes results", async () => {
-    let requestedUrl = "";
-    const books = await searchGoogleBooksByTitle("Dune", {
-      apiKey: "test-key",
+describe("searchOpenLibraryBySourceWork", () => {
+  it("requests Open Library by title and author and builds a direct Goodreads URL", async () => {
+    const requestedUrls: string[] = [];
+    const books = await searchOpenLibraryBySourceWork("Dune", ["Frank Herbert"], {
       fetcher: async (input) => {
-        requestedUrl = input;
-        return Response.json({
-          items: [
-            {
-              id: "dune",
-              volumeInfo: {
+        requestedUrls.push(input);
+        const url = new URL(input);
+
+        if (url.pathname === "/search.json") {
+          return Response.json({
+            docs: [
+              {
+                key: "/works/OL893415W",
                 title: "Dune",
-                authors: ["Frank Herbert"],
-                publishedDate: "1965-08-01",
-                infoLink: "https://books.google.com/books?id=dune"
+                author_name: ["Frank Herbert"],
+                first_publish_year: 1965,
+                editions: {
+                  docs: []
+                }
               }
+            ]
+          });
+        }
+
+        if (url.pathname === "/works/OL893415W/editions.json") {
+          return Response.json({
+            entries: [
+              {
+                key: "/books/OL123M",
+                identifiers: {
+                  goodreads: ["234225"]
+                },
+                description: "Frank Herbert's classic science fiction novel."
+              }
+            ]
+          });
+        }
+
+        throw new Error(`Unhandled Open Library test URL: ${input}`);
+      }
+    });
+
+    const searchUrl = new URL(requestedUrls[0]);
+
+    assert.equal(searchUrl.origin, "https://openlibrary.org");
+    assert.equal(searchUrl.pathname, "/search.json");
+    assert.equal(searchUrl.searchParams.get("title"), "Dune");
+    assert.equal(searchUrl.searchParams.get("author"), "Frank Herbert");
+    assert.deepEqual(books, [
+      {
+        id: "OL893415W",
+        title: "Dune",
+        authors: ["Frank Herbert"],
+        publishedDate: "1965",
+        description: "Frank Herbert's classic science fiction novel.",
+        openLibraryUrl: "https://openlibrary.org/works/OL893415W",
+        goodreadsId: "234225",
+        goodreadsUrl: "https://www.goodreads.com/book/show/234225",
+        isGoodreadsSearchFallback: false
+      }
+    ]);
+  });
+
+  it("falls back to a Goodreads search URL when Open Library has no Goodreads id", async () => {
+    const books = await searchOpenLibraryBySourceWork("Dune", ["Frank Herbert"], {
+      fetcher: async (input) => {
+        const url = new URL(input);
+
+        if (url.pathname === "/search.json") {
+          return Response.json({
+            docs: [
+              {
+                key: "/works/OL893415W",
+                title: "Dune",
+                author_name: ["Frank Herbert"]
+              }
+            ]
+          });
+        }
+
+        if (url.pathname === "/works/OL893415W/editions.json") {
+          return Response.json({ entries: [{ key: "/books/OL123M" }] });
+        }
+
+        throw new Error(`Unhandled Open Library test URL: ${input}`);
+      }
+    });
+
+    assert.equal(books[0]?.isGoodreadsSearchFallback, true);
+    assert.equal(
+      books[0]?.goodreadsUrl,
+      "https://www.goodreads.com/search?q=Dune+Frank+Herbert"
+    );
+  });
+
+  it("caches repeated Open Library source-work searches", async () => {
+    let fetchCount = 0;
+    const fetcher = async (input: string) => {
+      fetchCount += 1;
+      const url = new URL(input);
+
+      if (url.pathname === "/search.json") {
+        return Response.json({
+          docs: [
+            {
+              key: "/works/OL6216050W",
+              title: "Stories of Your Life and Others",
+              author_name: ["Ted Chiang"]
             }
           ]
         });
       }
-    });
 
-    const url = new URL(requestedUrl);
-
-    assert.equal(url.origin, "https://www.googleapis.com");
-    assert.equal(url.pathname, "/books/v1/volumes");
-    assert.equal(url.searchParams.get("q"), 'intitle:"Dune"');
-    assert.equal(url.searchParams.get("printType"), "books");
-    assert.equal(url.searchParams.get("projection"), "lite");
-    assert.equal(url.searchParams.get("key"), "test-key");
-    assert.deepEqual(books, [
-      {
-        id: "dune",
-        title: "Dune",
-        authors: ["Frank Herbert"],
-        publishedDate: "1965-08-01",
-        infoLink: "https://books.google.com/books?id=dune"
+      if (url.pathname === "/works/OL6216050W/editions.json") {
+        return Response.json({ entries: [] });
       }
-    ]);
+
+      throw new Error(`Unhandled Open Library test URL: ${input}`);
+    };
+
+    const firstResult = await searchOpenLibraryBySourceWork(
+      "Story of Your Life",
+      ["Ted Chiang"],
+      { fetcher }
+    );
+    const secondResult = await searchOpenLibraryBySourceWork(
+      "Story of Your Life",
+      ["Ted Chiang"],
+      { fetcher }
+    );
+
+    assert.equal(fetchCount, 2);
+    assert.deepEqual(secondResult, firstResult);
   });
 });
 
-describe("searchGoogleBooksBySourceWork", () => {
-  it("requests Google Books by source title and author", async () => {
+describe("searchOpenLibraryByTitle", () => {
+  it("requests Open Library by title without an author", async () => {
     let requestedUrl = "";
 
-    await searchGoogleBooksBySourceWork("Story of Your Life", ["Ted Chiang"], {
+    await searchOpenLibraryByTitle("Story of Your Life", {
       fetcher: async (input) => {
         requestedUrl = input;
-        return Response.json({ items: [] });
+        return Response.json({ docs: [] });
       }
     });
 
     const url = new URL(requestedUrl);
 
-    assert.equal(
-      url.searchParams.get("q"),
-      'intitle:"Story of Your Life" inauthor:"Ted Chiang"'
+    assert.equal(url.searchParams.get("title"), "Story of Your Life");
+    assert.equal(url.searchParams.get("author"), null);
+  });
+});
+
+describe("findWikipediaSourceWorksForMovie", () => {
+  it("extracts a Based on template from a Wikipedia film infobox", async () => {
+    const sourceWorks = await findWikipediaSourceWorksForMovie(
+      buildMovie({ title: "Arrival", year: 2016 }),
+      {
+        fetcher: buildWikipediaFetcher(
+          "Arrival (film)",
+          `{{Infobox film
+| name = Arrival
+| based_on = {{Based on|"[[Story of Your Life]]"|[[Ted Chiang]]}}
+}}`
+        )
+      }
     );
+
+    assert.equal(sourceWorks[0]?.title, "Story of Your Life");
+    assert.deepEqual(sourceWorks[0]?.authors, ["Ted Chiang"]);
+    assert.equal(sourceWorks[0]?.sourceProvider, "wikipedia");
+    assert.equal(sourceWorks[0]?.sourceDataUrl, "https://en.wikipedia.org/wiki/Arrival_(film)");
   });
 
-  it("caches repeated Google Books source-work searches", async () => {
-    let fetchCount = 0;
-    const fetcher = async () => {
-      fetchCount += 1;
-      return Response.json({
-        items: [
-          {
-            id: "story-of-your-life",
-            volumeInfo: {
-              title: "Stories of Your Life and Others",
-              authors: ["Ted Chiang"]
-            }
-          }
-        ]
-      });
-    };
-
-    const firstResult = await searchGoogleBooksBySourceWork(
-      "Story of Your Life",
-      ["Ted Chiang"],
-      { fetcher }
-    );
-    const secondResult = await searchGoogleBooksBySourceWork(
-      "Story of Your Life",
-      ["Ted Chiang"],
-      { fetcher }
+  it("extracts linked plain-text based_on values from a Wikipedia film infobox", async () => {
+    const sourceWorks = await findWikipediaSourceWorksForMovie(
+      buildMovie({ title: "Dune", year: 2021 }),
+      {
+        fetcher: buildWikipediaFetcher(
+          "Dune (2021 film)",
+          `{{Infobox film
+| name = Dune
+| based_on = ''[[Dune (novel)|Dune]]'' by [[Frank Herbert]]
+}}`
+        )
+      }
     );
 
-    assert.equal(fetchCount, 1);
-    assert.deepEqual(secondResult, firstResult);
+    assert.equal(sourceWorks[0]?.title, "Dune");
+    assert.deepEqual(sourceWorks[0]?.authors, ["Frank Herbert"]);
+  });
+
+  it("extracts plain source-work text from a Wikipedia film infobox", async () => {
+    const sourceWorks = await findWikipediaSourceWorksForMovie(
+      buildMovie({ title: "No Country for Old Men", year: 2007 }),
+      {
+        fetcher: buildWikipediaFetcher(
+          "No Country for Old Men (film)",
+          `{{Infobox film
+| name = No Country for Old Men
+| based_on = The novel No Country for Old Men by Cormac McCarthy
+}}`
+        )
+      }
+    );
+
+    assert.equal(sourceWorks[0]?.title, "No Country for Old Men");
+    assert.deepEqual(sourceWorks[0]?.authors, ["Cormac McCarthy"]);
+  });
+
+  it("returns no source work when based_on is missing", async () => {
+    const sourceWorks = await findWikipediaSourceWorksForMovie(
+      buildMovie({ title: "Original Movie", year: 2024 }),
+      {
+        fetcher: buildWikipediaFetcher(
+          "Original Movie (film)",
+          `{{Infobox film
+| name = Original Movie
+| director = Somebody
+}}`
+        )
+      }
+    );
+
+    assert.deepEqual(sourceWorks, []);
+  });
+
+  it("ignores malformed Based on templates", () => {
+    assert.deepEqual(parseWikipediaBasedOnValue("{{Based on|}}"), []);
   });
 });
 
@@ -411,3 +613,44 @@ describe("findWikidataSourceWorksForMovie", () => {
     assert.deepEqual(secondResult[0]?.authors, ["Frank Herbert"]);
   });
 });
+
+function buildWikipediaFetcher(pageTitle: string, wikitext: string) {
+  return async (input: string) => {
+    const url = new URL(input);
+    const pageKey = pageTitle.replace(/\s+/g, "_");
+
+    if (url.hostname === "en.wikipedia.org" && url.searchParams.get("action") === "raw") {
+      const requestedKey = decodeURIComponent(url.pathname.replace(/^\/wiki\//, ""));
+
+      if (requestedKey === pageKey) {
+        return new Response(wikitext);
+      }
+
+      return new Response("not found", { status: 404 });
+    }
+
+    if (url.pathname.endsWith("/search/page")) {
+      return Response.json({
+        pages: [
+          {
+            id: 12345,
+            key: pageKey,
+            title: pageTitle,
+            excerpt: `${pageTitle} is a film.`
+          }
+        ]
+      });
+    }
+
+    if (url.pathname.includes("/page/")) {
+      return Response.json({
+        id: 12345,
+        key: pageKey,
+        title: pageTitle,
+        source: wikitext
+      });
+    }
+
+    throw new Error(`Unhandled Wikipedia test URL: ${input}`);
+  };
+}

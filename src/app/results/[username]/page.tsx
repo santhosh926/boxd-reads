@@ -52,7 +52,7 @@ export default async function ResultsPage({ params }: ResultsPageProps) {
         </h1>
         <p className="mt-5 max-w-3xl text-lg leading-8 text-ink/70">
           We imported {importResult.data.totalImported} movies, checked adaptation
-          metadata, and searched Google Books for the identified source books. No
+          metadata, and searched Open Library for Goodreads links to the identified source books. No
           profile data or reading lists are saved.
         </p>
       </section>
@@ -86,7 +86,7 @@ export default async function ResultsPage({ params }: ResultsPageProps) {
           <div>
             <p className="text-sm text-ink/60">Book searches</p>
             <p className="mt-1 text-2xl font-bold text-ink">
-              {matchResult.googleBooksSearchCount}
+              {matchResult.bookLookupCount}
             </p>
           </div>
           <div>
@@ -99,10 +99,10 @@ export default async function ResultsPage({ params }: ResultsPageProps) {
       <section className="py-8">
         <div className="flex items-end justify-between gap-4">
           <div>
-            <h2 className="text-2xl font-bold text-ink">Google Books matches</h2>
+            <h2 className="text-2xl font-bold text-ink">Goodreads matches</h2>
             <p className="mt-2 text-sm text-ink/65">
-              Each result starts from a source work identified in Wikidata, then links to
-              the matching Google Books record.
+              Each result starts from source data identified in Wikipedia, then links to
+              Goodreads through Open Library metadata.
             </p>
           </div>
           <span className="rounded-full bg-white/70 px-3 py-1 text-sm font-semibold text-moss">
@@ -119,10 +119,10 @@ export default async function ResultsPage({ params }: ResultsPageProps) {
           </div>
         ) : (
           <div className="mt-5 rounded-lg border border-ink/10 bg-white/70 p-6 shadow-soft">
-            <h3 className="text-lg font-semibold text-ink">No Google Books matches found</h3>
+            <h3 className="text-lg font-semibold text-ink">No Goodreads matches found</h3>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-ink/70">
               None of the imported movies produced both a book-adaptation source and a
-              matching Google Books record.
+              matching Open Library book record.
             </p>
           </div>
         )}
