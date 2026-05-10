@@ -31,7 +31,7 @@ export default function Home() {
           BoxdReads
         </Link>
         <span className="rounded-full border border-ink/10 bg-white/60 px-3 py-1 text-sm text-ink/70">
-          V1 import
+          V1 matching
         </span>
       </nav>
 
@@ -44,8 +44,8 @@ export default function Home() {
             Turn your favorite films into your next favorite books.
           </h1>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-ink/70">
-            Enter a public Letterboxd username to import movie activity and
-            prioritize the films you rated highest.
+            Enter a Letterboxd username to import public movie activity and match those
+            films to known source books.
           </p>
 
           <form
@@ -82,13 +82,13 @@ export default function Home() {
         <div className="rounded-lg border border-ink/10 bg-ink p-6 text-white shadow-soft">
           <div className="rounded-md bg-white/8 p-5">
             <p className="text-sm uppercase tracking-[0.16em] text-wheat">
-              Import preview
+              Adaptation preview
             </p>
             <div className="mt-6 space-y-5">
               {[
                 "Fetch public activity",
-                "Normalize movie fields",
-                "Prioritize high ratings"
+                "Find source works",
+                "Match Google Books"
               ].map((title, index) => (
                   <div className="flex items-center gap-4" key={title}>
                     <span className="flex h-11 w-11 items-center justify-center rounded-md bg-clay text-sm font-bold">

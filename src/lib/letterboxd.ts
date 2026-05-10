@@ -66,6 +66,13 @@ const fallbackMovies: Movie[] = [
     posterUrl:
       "https://a.ltrbxd.com/resized/sm/upload/ut/1d/6k/1w/howls-moving-castle-0-600-0-900-crop.jpg",
     source: "letterboxd"
+  },
+  {
+    title: "Dune: Part One",
+    year: 2021,
+    rating: 4,
+    letterboxdUrl: "https://letterboxd.com/film/dune-2021/",
+    source: "letterboxd"
   }
 ];
 

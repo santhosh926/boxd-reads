@@ -1,5 +1,6 @@
 node_modules
 .next
+.test-build
 out
 dist
 .env*.local
