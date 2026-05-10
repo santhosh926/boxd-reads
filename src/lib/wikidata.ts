@@ -426,7 +426,7 @@ async function fetchWikidata(
 }
 
 function isBookishSourceWork(description?: string): boolean {
-  return /\b(book|novel|novella|short story|memoir|play|comic book|graphic novel)\b/i.test(
+  return /\b(book|novel|novella|short story|memoir|manga|comic book|graphic novel|magazine)\b/i.test(
     description ?? ""
   );
 }

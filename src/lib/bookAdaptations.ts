@@ -313,11 +313,8 @@ function getBookDetail(
   if (!book.description) {
     const provider = getSourceProviderLabel(sourceWork);
     const author = sourceWork.authors.length > 0 ? ` by ${sourceWork.authors.join(", ")}` : "";
-    const goodreadsDetail = book.isGoodreadsSearchFallback
-      ? " The Goodreads link opens a search because Open Library did not expose a Goodreads identifier."
-      : " The Goodreads link uses an identifier exposed by Open Library.";
 
-    return `${provider} identifies "${movie.title}" as based on "${sourceWork.title}"${author}. Open Library returned a matching book record.${goodreadsDetail}`;
+    return `${provider} identifies "${movie.title}" as based on "${sourceWork.title}"${author}. Open Library returned a matching book record.`;
   }
 
   const cleanedDescription = book.description

@@ -58,7 +58,6 @@ function buildOpenLibraryBook(
     publishedDate: "2002",
     goodreadsId: "223380",
     goodreadsUrl: "https://www.goodreads.com/book/show/223380",
-    isGoodreadsSearchFallback: false,
     ...overrides
   };
 }
@@ -333,13 +332,162 @@ describe("searchOpenLibraryBySourceWork", () => {
         description: "Frank Herbert's classic science fiction novel.",
         openLibraryUrl: "https://openlibrary.org/works/OL893415W",
         goodreadsId: "234225",
-        goodreadsUrl: "https://www.goodreads.com/book/show/234225",
-        isGoodreadsSearchFallback: false
+        goodreadsUrl: "https://www.goodreads.com/book/show/234225"
       }
     ]);
   });
 
-  it("falls back to a Goodreads search URL when Open Library has no Goodreads id", async () => {
+  it("uses a Goodreads ISBN URL when Open Library has no Goodreads id", async () => {
+    const books = await searchOpenLibraryBySourceWork("Dune", ["Frank Herbert"], {
+      fetcher: async (input) => {
+        const url = new URL(input);
+
+        if (url.pathname === "/search.json") {
+          return Response.json({
+            docs: [
+              {
+                key: "/works/OL893415W",
+                title: "Dune",
+                author_name: ["Frank Herbert"]
+              }
+            ]
+          });
+        }
+
+        if (url.pathname === "/works/OL893415W/editions.json") {
+          return Response.json({
+            entries: [
+              {
+                key: "/books/OL123M",
+                isbn_13: ["9780441172719"]
+              }
+            ]
+          });
+        }
+
+        throw new Error(`Unhandled Open Library test URL: ${input}`);
+      }
+    });
+
+    assert.equal(books[0]?.goodreadsId, undefined);
+    assert.equal(books[0]?.goodreadsUrl, "https://www.goodreads.com/book/isbn/9780441172719");
+  });
+
+  it("ignores translated Goodreads identifiers when an original-looking edition exists", async () => {
+    const books = await searchOpenLibraryBySourceWork("The Housemaid", ["Freida McFadden"], {
+      fetcher: async (input) => {
+        const url = new URL(input);
+
+        if (url.pathname === "/search.json") {
+          return Response.json({
+            docs: [
+              {
+                key: "/works/OL27729743W",
+                title: "The Housemaid",
+                author_name: ["Freida McFadden"],
+                first_publish_year: 2022
+              }
+            ]
+          });
+        }
+
+        if (url.pathname === "/works/OL27729743W/editions.json") {
+          return Response.json({
+            entries: [
+              {
+                key: "/books/OL50515918M",
+                title: "Pomoc domowa",
+                publish_date: "2023",
+                identifiers: {
+                  goodreads: ["198541402"]
+                },
+                isbn_13: ["9788367815888"],
+                languages: [{ key: "/languages/pol" }],
+                translation_of: "The Housemaid",
+                translated_from: [{ key: "/languages/eng" }],
+                contributors: [{ role: "Translator", name: "Elzbieta Pawlik" }],
+                description: "Polish description"
+              },
+              {
+                key: "/books/OL37842696M",
+                title: "The Housemaid",
+                publish_date: "Apr 21, 2022",
+                isbn_13: ["9781803144382"],
+                description: "English description"
+              }
+            ]
+          });
+        }
+
+        throw new Error(`Unhandled Open Library test URL: ${input}`);
+      }
+    });
+
+    assert.equal(books[0]?.goodreadsId, undefined);
+    assert.equal(books[0]?.goodreadsUrl, "https://www.goodreads.com/book/isbn/9781803144382");
+    assert.equal(books[0]?.description, "English description");
+  });
+
+  it("ignores translated descriptions when selecting book metadata", async () => {
+    const books = await searchOpenLibraryBySourceWork("Chainsaw Man, Vol. 1", ["Tatsuki Fujimoto"], {
+      fetcher: async (input) => {
+        const url = new URL(input);
+
+        if (url.pathname === "/search.json") {
+          return Response.json({
+            docs: [
+              {
+                key: "/works/OL22142129W",
+                title: "Chainsaw Man, Vol. 1",
+                author_name: ["Tatsuki Fujimoto"],
+                first_publish_year: 2019,
+                editions: {
+                  docs: [
+                    {
+                      key: "/books/OL30165195M",
+                      title: "Chainsaw Man, Vol. 1",
+                      publish_date: ["2020"],
+                      isbn: ["9781974709939", "1974709930"]
+                    }
+                  ]
+                }
+              }
+            ]
+          });
+        }
+
+        if (url.pathname === "/works/OL22142129W/editions.json") {
+          return Response.json({
+            entries: [
+              {
+                key: "/books/OL49640203M",
+                title: "Chainsaw Man, Vol. 1",
+                publish_date: "2022-06-06",
+                isbn_13: ["9788828717508"],
+                languages: [{ key: "/languages/ita" }],
+                description: "Italian description"
+              },
+              {
+                key: "/books/OL30165195M",
+                title: "Chainsaw Man, Vol. 1",
+                publish_date: "2020",
+                isbn_13: ["9781974709939"],
+                languages: [{ key: "/languages/eng" }],
+                translation_of: "Inu to Chenso"
+              }
+            ]
+          });
+        }
+
+        throw new Error(`Unhandled Open Library test URL: ${input}`);
+      }
+    });
+
+    assert.equal(books[0]?.description, undefined);
+    assert.equal(books[0]?.goodreadsUrl, "https://www.goodreads.com/book/isbn/9781974709939");
+  });
+
+  it("omits the Goodreads URL when Open Library has no Goodreads id or ISBN", async () => {
     const books = await searchOpenLibraryBySourceWork("Dune", ["Frank Herbert"], {
       fetcher: async (input) => {
         const url = new URL(input);
@@ -364,11 +512,8 @@ describe("searchOpenLibraryBySourceWork", () => {
       }
     });
 
-    assert.equal(books[0]?.isGoodreadsSearchFallback, true);
-    assert.equal(
-      books[0]?.goodreadsUrl,
-      "https://www.goodreads.com/search?q=Dune+Frank+Herbert"
-    );
+    assert.equal(books[0]?.goodreadsId, undefined);
+    assert.equal(books[0]?.goodreadsUrl, undefined);
   });
 
   it("caches repeated Open Library source-work searches", async () => {
@@ -440,7 +585,13 @@ describe("findWikipediaSourceWorksForMovie", () => {
           `{{Infobox film
 | name = Arrival
 | based_on = {{Based on|"[[Story of Your Life]]"|[[Ted Chiang]]}}
+}}`,
+          {
+            "Story of Your Life": `{{Short description|1998 science fiction novella by Ted Chiang}}
+{{Infobox short story
+| name = Story of Your Life
 }}`
+          }
         )
       }
     );
@@ -460,7 +611,13 @@ describe("findWikipediaSourceWorksForMovie", () => {
           `{{Infobox film
 | name = Dune
 | based_on = ''[[Dune (novel)|Dune]]'' by [[Frank Herbert]]
+}}`,
+          {
+            "Dune (novel)": `{{Short description|1965 science fiction novel by Frank Herbert}}
+{{Infobox book
+| name = Dune
 }}`
+          }
         )
       }
     );
@@ -502,6 +659,74 @@ describe("findWikipediaSourceWorksForMovie", () => {
     );
 
     assert.deepEqual(sourceWorks, []);
+  });
+
+  it("ignores based_on entries that point to characters, games, franchises, or films", async () => {
+    const cases: Array<{
+      title: string;
+      pageTitle: string;
+      basedOn: string;
+      sourcePages: Record<string, string>;
+    }> = [
+      {
+        title: "The Super Mario Galaxy Movie",
+        pageTitle: "The Super Mario Galaxy Movie",
+        basedOn: `{{Based on|''[[Mario (franchise)|Mario]]''|[[Nintendo]]}}`,
+        sourcePages: {
+          "Mario (franchise)": `{{Short description|Multimedia franchise by Nintendo}}
+{{Infobox media franchise
+| title = Mario
+}}`
+        }
+      },
+      {
+        title: "The Devil Wears Prada 2",
+        pageTitle: "The Devil Wears Prada 2",
+        basedOn: `{{Based on|Characters|[[Lauren Weisberger]]}}`,
+        sourcePages: {}
+      },
+      {
+        title: "Faces of Death",
+        pageTitle: "Faces of Death (2026 film)",
+        basedOn: `{{Based on|''[[Faces of Death]]''|[[Gorgon Video]]}}`,
+        sourcePages: {
+          "Faces of Death": `{{Short description|1978 film by John Alan Schwartz}}
+{{Infobox film
+| name = Faces of Death
+}}`
+        }
+      },
+      {
+        title: "Over Your Dead Body",
+        pageTitle: "Over Your Dead Body (2026 film)",
+        basedOn: `{{Based on|''[[The Trip (2021 film)|I onde dager]]''|[[Tommy Wirkola]]}}`,
+        sourcePages: {
+          "The Trip (2021 film)": `{{Short description|2021 Norwegian film}}
+{{Infobox film
+| name = The Trip
+}}`
+        }
+      }
+    ];
+
+    for (const testCase of cases) {
+      const sourceWorks = await findWikipediaSourceWorksForMovie(
+        buildMovie({ title: testCase.title, year: 2026 }),
+        {
+          cache: false,
+          fetcher: buildWikipediaFetcher(
+            testCase.pageTitle,
+            `{{Infobox film
+| name = ${testCase.title}
+| based_on = ${testCase.basedOn}
+}}`,
+            testCase.sourcePages
+          )
+        }
+      );
+
+      assert.deepEqual(sourceWorks, []);
+    }
   });
 
   it("ignores malformed Based on templates", () => {
@@ -614,16 +839,26 @@ describe("findWikidataSourceWorksForMovie", () => {
   });
 });
 
-function buildWikipediaFetcher(pageTitle: string, wikitext: string) {
+function buildWikipediaFetcher(
+  pageTitle: string,
+  wikitext: string,
+  sourcePages: Record<string, string> = {}
+) {
   return async (input: string) => {
     const url = new URL(input);
     const pageKey = pageTitle.replace(/\s+/g, "_");
+    const rawPages = new Map<string, string>([[pageKey, wikitext]]);
+
+    for (const [sourceTitle, sourceWikitext] of Object.entries(sourcePages)) {
+      rawPages.set(sourceTitle.replace(/\s+/g, "_"), sourceWikitext);
+    }
 
     if (url.hostname === "en.wikipedia.org" && url.searchParams.get("action") === "raw") {
       const requestedKey = decodeURIComponent(url.pathname.replace(/^\/wiki\//, ""));
+      const requestedWikitext = rawPages.get(requestedKey);
 
-      if (requestedKey === pageKey) {
-        return new Response(wikitext);
+      if (requestedWikitext) {
+        return new Response(requestedWikitext);
       }
 
       return new Response("not found", { status: 404 });

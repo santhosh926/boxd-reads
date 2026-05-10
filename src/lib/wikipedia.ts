@@ -55,14 +55,24 @@ type MoviePageCandidate = {
 type ParsedSourceWork = {
   title: string;
   authors: string[];
+  sourcePageKey?: string;
+  rawValue: string;
+  hasExplicitBookishSignal: boolean;
 };
+
+type SourcePageClassification = "bookish" | "non-bookish" | "unknown";
 
 const WIKIMEDIA_SEARCH_URL = "https://api.wikimedia.org/core/v1/wikipedia/en/search/page";
 const WIKIMEDIA_PAGE_URL = "https://api.wikimedia.org/core/v1/wikipedia/en/page/";
 const WIKIPEDIA_PAGE_URL = "https://en.wikipedia.org/wiki/";
 const WIKIPEDIA_SOURCE_WORK_CACHE_NAMESPACE = "wikipedia-source-works";
+const WIKIPEDIA_SOURCE_PAGE_CACHE_NAMESPACE = "wikipedia-source-page-classification";
 const WIKIPEDIA_REQUEST_SPACING_MS = 450;
 const WIKIPEDIA_RATE_LIMIT_RETRY_MS = 2500;
+const BOOKISH_SOURCE_PATTERN =
+  /\b(?:book|novel|novella|short stor(?:y|ies)|memoir|biograph(?:y|ies)|autobiograph(?:y|ies)|manga|comic(?: book| strip|s)?|graphic novel|webcomic|webtoon|manhwa|manhua|light novel|magazine)\b/i;
+const NON_BOOKISH_SOURCE_PAGE_PATTERN =
+  /\b(?:film|movie|motion picture|video game|game series|media franchise|television series|tv series|character|characters|album|song)\b/i;
 
 let nextWikipediaRequestAt = 0;
 
@@ -150,7 +160,7 @@ async function fetchSourceWorksFromRawPage(
     );
   }
 
-  return buildSourceWorksFromWikitext(movie, candidate, wikitext);
+  return buildSourceWorksFromWikitext(movie, candidate, wikitext, fetcher);
 }
 
 async function searchMoviePageCandidates(
@@ -217,15 +227,17 @@ async function fetchSourceWorksFromPage(
       pageId,
       title: pageTitle
     },
-    wikitext
+    wikitext,
+    fetcher
   );
 }
 
-function buildSourceWorksFromWikitext(
+async function buildSourceWorksFromWikitext(
   movie: Movie,
   candidate: MoviePageCandidate,
-  wikitext: string
-): SourceWork[] {
+  wikitext: string,
+  fetcher: Fetcher
+): Promise<SourceWork[]> {
   const infobox = extractTemplate(wikitext, "Infobox film");
 
   if (!infobox) {
@@ -238,16 +250,26 @@ function buildSourceWorksFromWikitext(
     return [];
   }
 
-  return parseBasedOnValue(basedOn).map((sourceWork) => ({
-    id: `wikipedia-${candidate.pageId}-${normalizeTitle(sourceWork.title)}`,
-    title: sourceWork.title,
-    authors: sourceWork.authors,
-    sourceDataUrl: `${WIKIPEDIA_PAGE_URL}${encodeURIComponent(candidate.key)}`,
-    sourceProvider: "wikipedia" as const,
-    filmId: candidate.pageId,
-    filmTitle: stripPageQualifier(candidate.title),
-    ...(movie.year ? { filmYear: movie.year } : {})
-  }));
+  const sourceWorks: SourceWork[] = [];
+
+  for (const sourceWork of parseBasedOnValue(basedOn)) {
+    if (!(await isBookishWikipediaSourceWork(sourceWork, fetcher))) {
+      continue;
+    }
+
+    sourceWorks.push({
+      id: `wikipedia-${candidate.pageId}-${normalizeTitle(sourceWork.title)}`,
+      title: sourceWork.title,
+      authors: sourceWork.authors,
+      sourceDataUrl: `${WIKIPEDIA_PAGE_URL}${encodeURIComponent(candidate.key)}`,
+      sourceProvider: "wikipedia" as const,
+      filmId: candidate.pageId,
+      filmTitle: stripPageQualifier(candidate.title),
+      ...(movie.year ? { filmYear: movie.year } : {})
+    });
+  }
+
+  return sourceWorks;
 }
 
 function toMoviePageCandidate(
@@ -344,7 +366,9 @@ function parseBasedOnTemplate(template: string): ParsedSourceWork | null {
     .slice(1)
     .map((part) => part.trim())
     .filter((part) => part && !part.includes("="));
-  const title = cleanSourceTitle(cleanWikiText(parts[0] ?? ""));
+  const rawTitle = parts[0] ?? "";
+  const titleLink = getFirstWikiLink(rawTitle);
+  const title = cleanSourceTitle(cleanWikiText(rawTitle));
 
   if (!title) {
     return null;
@@ -352,15 +376,17 @@ function parseBasedOnTemplate(template: string): ParsedSourceWork | null {
 
   return {
     title,
-    authors: splitAuthorNames(cleanWikiText(parts[1] ?? ""))
+    authors: splitAuthorNames(cleanWikiText(parts.slice(1).join(", "))),
+    ...(titleLink ? { sourcePageKey: titleLink.pageKey } : {}),
+    rawValue: template,
+    hasExplicitBookishSignal: hasBookishSourceSignal(template)
   };
 }
 
 function parsePlainBasedOnValue(value: string): ParsedSourceWork[] {
   const normalizedValue = value.replace(/<br\s*\/?>/gi, ";");
   const parts = splitTopLevel(normalizedValue, ";")
-    .map(cleanWikiText)
-    .map((part) => part.replace(/\s+/g, " ").trim())
+    .map((part) => part.trim())
     .filter(Boolean);
 
   return parts
@@ -369,14 +395,26 @@ function parsePlainBasedOnValue(value: string): ParsedSourceWork[] {
 }
 
 function parsePlainBasedOnPart(value: string): ParsedSourceWork | null {
-  const match = value.match(/^(.+?)\s+by\s+(.+)$/i);
+  const cleanValue = cleanWikiText(value).replace(/\s+/g, " ").trim();
+  const cleanMatch = cleanValue.match(/^(.+?)\s+by\s+(.+)$/i);
+  const rawMatch = value.match(/^([\s\S]+?)\s+by\s+([\s\S]+)$/i);
+  const rawTitle = rawMatch?.[1] ?? value;
+  const titleLink = getFirstWikiLink(rawTitle);
 
-  if (!match?.[1]) {
-    const title = cleanSourceTitle(value);
-    return title ? { title, authors: [] } : null;
+  if (!cleanMatch?.[1]) {
+    const title = cleanSourceTitle(cleanValue);
+    return title
+      ? {
+          title,
+          authors: [],
+          ...(titleLink ? { sourcePageKey: titleLink.pageKey } : {}),
+          rawValue: value,
+          hasExplicitBookishSignal: hasBookishSourceSignal(value)
+        }
+      : null;
   }
 
-  const title = cleanSourceTitle(match[1]);
+  const title = cleanSourceTitle(cleanMatch[1]);
 
   if (!title) {
     return null;
@@ -384,8 +422,146 @@ function parsePlainBasedOnPart(value: string): ParsedSourceWork | null {
 
   return {
     title,
-    authors: splitAuthorNames(match[2] ?? "")
+    authors: splitAuthorNames(cleanMatch[2] ?? ""),
+    ...(titleLink ? { sourcePageKey: titleLink.pageKey } : {}),
+    rawValue: value,
+    hasExplicitBookishSignal: hasBookishSourceSignal(value)
   };
+}
+
+async function isBookishWikipediaSourceWork(
+  sourceWork: ParsedSourceWork,
+  fetcher: Fetcher
+): Promise<boolean> {
+  if (hasDisqualifyingBasedOnText(sourceWork)) {
+    return false;
+  }
+
+  const pageKey = sourceWork.sourcePageKey ?? toWikipediaPageKey(sourceWork.title);
+  const classification = await classifyWikipediaSourcePage(pageKey, fetcher);
+
+  if (classification === "bookish") {
+    return true;
+  }
+
+  if (classification === "non-bookish") {
+    return false;
+  }
+
+  return sourceWork.hasExplicitBookishSignal;
+}
+
+async function classifyWikipediaSourcePage(
+  pageKey: string,
+  fetcher: Fetcher
+): Promise<SourcePageClassification> {
+  const cacheKey = normalizeTitle(pageKey);
+  const cachedClassification = getCachedValue<SourcePageClassification>(
+    WIKIPEDIA_SOURCE_PAGE_CACHE_NAMESPACE,
+    cacheKey
+  );
+
+  if (cachedClassification) {
+    return cachedClassification;
+  }
+
+  const wikitext = await fetchWikipediaRawWikitext(pageKey, fetcher);
+  const classification = wikitext
+    ? classifyWikipediaSourcePageWikitext(wikitext)
+    : "unknown";
+
+  setCachedValue(WIKIPEDIA_SOURCE_PAGE_CACHE_NAMESPACE, cacheKey, classification);
+  return classification;
+}
+
+function classifyWikipediaSourcePageWikitext(value: string): SourcePageClassification {
+  const lead = value.slice(0, 7000);
+
+  if (hasNonBookishInfobox(lead)) {
+    return "non-bookish";
+  }
+
+  if (hasBookishInfobox(lead) || hasBookishSourceSignal(getShortDescription(lead))) {
+    return "bookish";
+  }
+
+  if (NON_BOOKISH_SOURCE_PAGE_PATTERN.test(getShortDescription(lead))) {
+    return "non-bookish";
+  }
+
+  if (hasBookishCategory(value)) {
+    return "bookish";
+  }
+
+  if (hasNonBookishCategory(value)) {
+    return "non-bookish";
+  }
+
+  return "unknown";
+}
+
+function hasDisqualifyingBasedOnText(sourceWork: ParsedSourceWork): boolean {
+  const title = normalizeTitle(sourceWork.title);
+  const rawValue = cleanWikiText(sourceWork.rawValue) || sourceWork.rawValue;
+
+  if (title === "character" || title === "characters") {
+    return true;
+  }
+
+  if (!sourceWork.hasExplicitBookishSignal && /\bcharacters?\b/i.test(rawValue)) {
+    return true;
+  }
+
+  if (!sourceWork.hasExplicitBookishSignal && NON_BOOKISH_SOURCE_PAGE_PATTERN.test(rawValue)) {
+    return true;
+  }
+
+  return false;
+}
+
+function hasBookishInfobox(value: string): boolean {
+  return /{{\s*Infobox\s+(?:book|novel|short story|manga|animanga|comic book title|graphic novel|comic strip|magazine|newspaper)\b/i.test(
+    value
+  );
+}
+
+function hasNonBookishInfobox(value: string): boolean {
+  return /{{\s*Infobox\s+(?:film|television|video game|media franchise|character|fictional character|album|song|play|musical|television episode)\b/i.test(
+    value
+  );
+}
+
+function hasBookishCategory(value: string): boolean {
+  return /\[\[Category:[^\]]*\b(?:books|novels|novellas|short stories|manga|comics|comic books|graphic novels|webcomics|webtoons|magazines)\b[^\]]*\]\]/i.test(
+    value
+  );
+}
+
+function hasNonBookishCategory(value: string): boolean {
+  return /\[\[Category:[^\]]*\b(?:films|movies|video games|media franchises|film series|television series|fictional characters|songs|albums)\b[^\]]*\]\]/i.test(
+    value
+  );
+}
+
+function getShortDescription(value: string): string {
+  const template = extractTemplate(value, "Short description");
+
+  if (!template) {
+    return "";
+  }
+
+  return cleanWikiText(splitTopLevel(template.slice(2, -2), "|")[1] ?? "");
+}
+
+function hasBookishSourceSignal(value: string): boolean {
+  return BOOKISH_SOURCE_PATTERN.test(value) || BOOKISH_SOURCE_PATTERN.test(cleanWikiText(value));
+}
+
+function getFirstWikiLink(value: string): { pageKey: string } | undefined {
+  const match = value.match(/\[\[([^\]|#]+)(?:#[^\]|]*)?(?:\|[^\]]+)?\]\]/);
+  const target = match?.[1]?.trim();
+
+  return target ? { pageKey: toWikipediaPageKey(target) } : undefined;
 }
 
 function extractTemplate(value: string, templateName: string): string | null {
