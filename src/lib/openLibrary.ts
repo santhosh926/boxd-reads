@@ -9,8 +9,7 @@ export type OpenLibraryBook = {
   description?: string;
   openLibraryUrl?: string;
   goodreadsId?: string;
-  goodreadsUrl: string;
-  isGoodreadsSearchFallback: boolean;
+  goodreadsUrl?: string;
 };
 
 export type OpenLibrarySearchErrorCode = "FETCH_FAILED" | "RATE_LIMITED";
@@ -55,18 +54,43 @@ type OpenLibraryEditionsResponse = {
 type OpenLibraryEdition = {
   key?: string;
   title?: string;
-  publish_date?: string;
+  subtitle?: string;
+  full_title?: string;
+  publish_date?: string | string[];
   description?: string | {
     value?: string;
   };
   identifiers?: Record<string, string[]>;
+  isbn?: string[];
+  isbn_10?: string[];
+  isbn_13?: string[];
+  languages?: Array<{
+    key?: string;
+  }>;
+  translated_from?: Array<{
+    key?: string;
+  }>;
+  translation_of?: string;
+  contributors?: Array<{
+    role?: string;
+    name?: string;
+  }>;
+};
+
+type ScoredOpenLibraryEdition = {
+  edition: OpenLibraryEdition;
+  index: number;
+  score: number;
 };
 
 const OPEN_LIBRARY_SEARCH_URL = "https://openlibrary.org/search.json";
 const OPEN_LIBRARY_BASE_URL = "https://openlibrary.org";
 const OPEN_LIBRARY_CACHE_NAMESPACE = "open-library-search";
+const OPEN_LIBRARY_CACHE_VERSION = "canonical-goodreads-editions-v1";
 const GOODREADS_BOOK_URL = "https://www.goodreads.com/book/show/";
-const GOODREADS_SEARCH_URL = "https://www.goodreads.com/search";
+const GOODREADS_ISBN_URL = "https://www.goodreads.com/book/isbn/";
+const ENGLISH_LANGUAGE_KEY = "/languages/eng";
+const MIN_CANONICAL_EDITION_SCORE = 50;
 
 export async function searchOpenLibraryByTitle(
   title: string,
@@ -124,8 +148,17 @@ async function searchOpenLibrary(
       "editions",
       "editions.key",
       "editions.title",
+      "editions.subtitle",
+      "editions.full_title",
       "editions.publish_date",
       "editions.identifiers",
+      "editions.isbn",
+      "editions.isbn_10",
+      "editions.isbn_13",
+      "editions.languages",
+      "editions.translation_of",
+      "editions.translated_from",
+      "editions.contributors",
       "editions.description"
     ].join(",")
   );
@@ -160,10 +193,18 @@ async function toOpenLibraryBook(
 
   const searchEditions = doc.editions?.docs ?? [];
   const fetchedEditions = await fetchEditions(doc.key, fetcher, options.editionsLimit ?? 10);
-  const editions = dedupeEditions(searchEditions.concat(fetchedEditions));
-  const goodreadsId = findGoodreadsId(editions);
+  const editions = dedupeEditions(fetchedEditions.concat(searchEditions));
+  const canonicalEditions = rankOpenLibraryEditions(
+    editions,
+    doc.title,
+    doc.first_publish_year
+  )
+    .filter(({ score }) => score >= MIN_CANONICAL_EDITION_SCORE)
+    .map(({ edition }) => edition);
+  const goodreadsId = findGoodreadsId(canonicalEditions);
+  const goodreadsIsbn = goodreadsId ? undefined : findIsbn(canonicalEditions);
   const authors = doc.author_name ?? [];
-  const description = editions.map(getEditionDescription).find(Boolean);
+  const description = canonicalEditions.map(getEditionDescription).find(Boolean);
 
   return {
     id: doc.key.replace(/^\/works\//, ""),
@@ -173,10 +214,7 @@ async function toOpenLibraryBook(
     ...(description ? { description } : {}),
     openLibraryUrl: `${OPEN_LIBRARY_BASE_URL}${doc.key}`,
     ...(goodreadsId ? { goodreadsId } : {}),
-    goodreadsUrl: goodreadsId
-      ? `${GOODREADS_BOOK_URL}${encodeURIComponent(goodreadsId)}`
-      : getGoodreadsSearchUrl(doc.title, authors),
-    isGoodreadsSearchFallback: !goodreadsId
+    ...getGoodreadsUrl(goodreadsId, goodreadsIsbn)
   };
 }
 
@@ -238,11 +276,81 @@ function getOpenLibraryCacheKey(
   options: OpenLibrarySearchOptions
 ): string {
   return [
+    OPEN_LIBRARY_CACHE_VERSION,
     normalizeCacheValue(title),
     `author:${normalizeCacheValue(primaryAuthor ?? "unknown")}`,
     `max:${options.maxResults ?? 5}`,
     `editions:${options.editionsLimit ?? 10}`
   ].join("|");
+}
+
+function rankOpenLibraryEditions(
+  editions: OpenLibraryEdition[],
+  workTitle: string,
+  firstPublishYear: number | undefined
+): ScoredOpenLibraryEdition[] {
+  return editions
+    .map((edition, index) => ({
+      edition,
+      index,
+      score: scoreOpenLibraryEdition(edition, workTitle, firstPublishYear)
+    }))
+    .sort((first, second) => {
+      if (second.score !== first.score) {
+        return second.score - first.score;
+      }
+
+      return first.index - second.index;
+    });
+}
+
+function scoreOpenLibraryEdition(
+  edition: OpenLibraryEdition,
+  workTitle: string,
+  firstPublishYear: number | undefined
+): number {
+  const editionTitle = edition.title ?? edition.full_title;
+  const normalizedWorkTitle = normalizeEditionTitle(workTitle);
+  const normalizedEditionTitle = editionTitle ? normalizeEditionTitle(editionTitle) : "";
+  let score = 0;
+
+  if (!normalizedEditionTitle) {
+    score += 50;
+  } else if (normalizedEditionTitle === normalizedWorkTitle) {
+    score += 80;
+  } else if (
+    normalizedEditionTitle.startsWith(normalizedWorkTitle) ||
+    normalizedWorkTitle.startsWith(normalizedEditionTitle)
+  ) {
+    score += 45;
+  } else {
+    score -= 80;
+  }
+
+  const languageKeys = getEditionLanguageKeys(edition);
+
+  if (languageKeys.includes(ENGLISH_LANGUAGE_KEY)) {
+    score += 60;
+  } else if (languageKeys.length > 0) {
+    score -= 40;
+  }
+
+  if (hasTranslationSignal(edition)) {
+    score -= 15;
+  }
+
+  if (hasTranslatorContributor(edition)) {
+    score -= 35;
+  }
+
+  const publishYear = getEditionPublishYear(edition);
+
+  if (firstPublishYear && publishYear) {
+    const yearDistance = Math.abs(firstPublishYear - publishYear);
+    score += yearDistance === 0 ? 30 : -Math.min(yearDistance * 5, 35);
+  }
+
+  return score;
 }
 
 function findGoodreadsId(editions: OpenLibraryEdition[]): string | undefined {
@@ -265,10 +373,75 @@ function findGoodreadsId(editions: OpenLibraryEdition[]): string | undefined {
   return undefined;
 }
 
-function getGoodreadsSearchUrl(title: string, authors: string[]): string {
-  const url = new URL(GOODREADS_SEARCH_URL);
-  url.searchParams.set("q", [title, authors[0]].filter(Boolean).join(" "));
-  return url.toString();
+function findIsbn(editions: OpenLibraryEdition[]): string | undefined {
+  for (const edition of editions) {
+    const identifiers = edition.identifiers ?? {};
+    const isbn = [
+      ...(edition.isbn_13 ?? []),
+      ...(edition.isbn_10 ?? []),
+      ...(edition.isbn ?? []),
+      ...(identifiers.isbn_13 ?? []),
+      ...(identifiers.isbn_10 ?? []),
+      ...(identifiers.isbn ?? [])
+    ]
+      .map(normalizeIsbn)
+      .find(Boolean);
+
+    if (isbn) {
+      return isbn;
+    }
+  }
+
+  return undefined;
+}
+
+function getGoodreadsUrl(
+  goodreadsId: string | undefined,
+  isbn: string | undefined
+): Pick<OpenLibraryBook, "goodreadsUrl"> | Record<string, never> {
+  if (goodreadsId) {
+    return { goodreadsUrl: `${GOODREADS_BOOK_URL}${encodeURIComponent(goodreadsId)}` };
+  }
+
+  if (isbn) {
+    return { goodreadsUrl: `${GOODREADS_ISBN_URL}${encodeURIComponent(isbn)}` };
+  }
+
+  return {};
+}
+
+function normalizeIsbn(value: string): string | undefined {
+  const normalized = value.replace(/[^0-9Xx]/g, "").toUpperCase();
+  return normalized.length === 10 || normalized.length === 13 ? normalized : undefined;
+}
+
+function getEditionLanguageKeys(edition: OpenLibraryEdition): string[] {
+  return (edition.languages ?? [])
+    .map((language) => language.key)
+    .filter((key): key is string => Boolean(key));
+}
+
+function hasTranslationSignal(edition: OpenLibraryEdition): boolean {
+  return Boolean(edition.translation_of || edition.translated_from?.length);
+}
+
+function hasTranslatorContributor(edition: OpenLibraryEdition): boolean {
+  return (edition.contributors ?? []).some((contributor) =>
+    /translator/i.test(contributor.role ?? "")
+  );
+}
+
+function getEditionPublishYear(edition: OpenLibraryEdition): number | undefined {
+  const publishDate = Array.isArray(edition.publish_date)
+    ? edition.publish_date.find(Boolean)
+    : edition.publish_date;
+
+  if (!publishDate) {
+    return undefined;
+  }
+
+  const year = publishDate.match(/\b(1[5-9]\d{2}|20\d{2}|21\d{2})\b/)?.[0];
+  return year ? Number(year) : undefined;
 }
 
 function getEditionDescription(edition: OpenLibraryEdition): string | undefined {
@@ -299,4 +472,14 @@ function dedupeEditions(editions: OpenLibraryEdition[]): OpenLibraryEdition[] {
 
 function normalizeCacheValue(value: string): string {
   return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+function normalizeEditionTitle(value: string): string {
+  return value
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/['’]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
 }

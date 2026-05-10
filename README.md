@@ -2,7 +2,7 @@
 
 V1 app for a tool that accepts a Letterboxd username, imports public movie activity, and matches those movies to books they were adapted from.
 
-Flow: user enters Letterboxd username -> app imports normalized films -> checks Wikipedia film source metadata for book-adaptation source works -> searches Open Library for the identified source title and author -> displays likely source-book matches with Goodreads links, confidence, and match details.
+Flow: user enters Letterboxd username -> app imports normalized films -> checks Wikipedia film source metadata for book-adaptation source works -> searches Open Library for the identified source title and author -> displays likely source-book matches with direct Goodreads book links when Open Library exposes a Goodreads ID or ISBN, confidence, and match details.
 
 This version is intentionally small. It does not include auth, a database, saved reading lists, or LLM calls.
 
@@ -54,7 +54,7 @@ npm test
 - Letterboxd RSS import with normalized movie output
 - Wikipedia source-work lookup before Open Library search
 - Open Library search by identified source title and author
-- Goodreads outbound links from Open Library identifiers or search fallback
+- Goodreads outbound links from Open Library Goodreads IDs or ISBNs
 - Optional Wikidata fallback behind `WIKIDATA_SOURCE_LOOKUP_ENABLED=true`
 - In-memory server cache for repeated Wikipedia and Open Library lookups
 - Matched results page at `/results/[username]`

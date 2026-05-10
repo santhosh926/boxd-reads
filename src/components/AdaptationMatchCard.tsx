@@ -45,8 +45,8 @@ export function AdaptationMatchCard({ match }: AdaptationMatchCardProps) {
       <p className="mt-4 text-sm leading-6 text-ink/70">{adaptation.detail}</p>
       <p className="mt-3 text-xs leading-5 text-ink/55">{match.reason}</p>
 
-      <div className="mt-5 flex flex-wrap gap-2">
-        {adaptation.goodreadsUrl ? (
+      {adaptation.goodreadsUrl ? (
+        <div className="mt-5 flex flex-wrap gap-2">
           <a
             className="inline-flex rounded-md border border-moss/20 px-3 py-2 text-sm font-semibold text-moss transition hover:border-moss hover:bg-fog"
             href={adaptation.goodreadsUrl}
@@ -55,18 +55,8 @@ export function AdaptationMatchCard({ match }: AdaptationMatchCardProps) {
           >
             View on Goodreads
           </a>
-        ) : null}
-        {adaptation.sourceDataUrl ? (
-          <a
-            className="inline-flex rounded-md border border-ink/10 px-3 py-2 text-sm font-semibold text-ink/70 transition hover:border-ink/30 hover:text-ink"
-            href={adaptation.sourceDataUrl}
-            rel="noreferrer"
-            target="_blank"
-          >
-            View source data
-          </a>
-        ) : null}
-      </div>
+        </div>
+      ) : null}
     </article>
   );
 }
