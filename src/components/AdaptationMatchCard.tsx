@@ -12,7 +12,7 @@ export function AdaptationMatchCard({ match }: AdaptationMatchCardProps) {
       <div className="flex items-start justify-between gap-4">
         <div>
           <p className="text-xs font-semibold uppercase tracking-[0.16em] text-clay">
-            Google Books result
+            Goodreads match
           </p>
           <h3 className="mt-3 text-lg font-semibold text-ink">{adaptation.bookTitle}</h3>
           <p className="mt-1 text-sm text-ink/60">
@@ -46,20 +46,20 @@ export function AdaptationMatchCard({ match }: AdaptationMatchCardProps) {
       <p className="mt-3 text-xs leading-5 text-ink/55">{match.reason}</p>
 
       <div className="mt-5 flex flex-wrap gap-2">
-        {adaptation.googleBooksUrl ? (
+        {adaptation.goodreadsUrl ? (
           <a
             className="inline-flex rounded-md border border-moss/20 px-3 py-2 text-sm font-semibold text-moss transition hover:border-moss hover:bg-fog"
-            href={adaptation.googleBooksUrl}
+            href={adaptation.goodreadsUrl}
             rel="noreferrer"
             target="_blank"
           >
-            View on Google Books
+            View on Goodreads
           </a>
         ) : null}
-        {adaptation.wikidataUrl ? (
+        {adaptation.sourceDataUrl ? (
           <a
             className="inline-flex rounded-md border border-ink/10 px-3 py-2 text-sm font-semibold text-ink/70 transition hover:border-ink/30 hover:text-ink"
-            href={adaptation.wikidataUrl}
+            href={adaptation.sourceDataUrl}
             rel="noreferrer"
             target="_blank"
           >

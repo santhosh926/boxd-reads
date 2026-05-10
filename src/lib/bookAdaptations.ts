@@ -1,15 +1,13 @@
 import type { Movie } from "./letterboxd";
 import {
-  GoogleBooksSearchException,
-  searchGoogleBooksBySourceWork,
-  searchGoogleBooksByTitle,
-  type GoogleBook
-} from "./googleBooks";
-import {
-  findWikidataSourceWorksForMovie,
-  WikidataSourceLookupException,
-  type WikidataSourceWork
-} from "./wikidata";
+  OpenLibrarySearchException,
+  searchOpenLibraryBySourceWork,
+  searchOpenLibraryByTitle,
+  type OpenLibraryBook
+} from "./openLibrary";
+import { findSourceWorksForMovie } from "./sourceWorks";
+import { SourceLookupException, type SourceWork } from "./sourceWorkTypes";
+import { WikidataSourceLookupException } from "./wikidata";
 
 export type MatchConfidence = "high" | "medium";
 
@@ -23,20 +21,20 @@ export type BookAdaptation = {
   bookAuthor: string;
   bookYear?: number;
   detail: string;
-  wikidataUrl?: string;
-  googleBooksUrl?: string;
+  sourceDataUrl?: string;
+  goodreadsUrl?: string;
 };
 
 export type BookAdaptationMatch = {
   id: string;
   movie: Movie;
-  sourceWork: WikidataSourceWork;
+  sourceWork: SourceWork;
   adaptation: BookAdaptation;
   confidence: MatchConfidence;
   matchedOn:
-    | "wikidata-source-title-author"
-    | "wikidata-source-title"
-    | "wikidata-source-containing-volume";
+    | "source-title-author"
+    | "source-title"
+    | "source-containing-volume";
   reason: string;
 };
 
@@ -45,24 +43,24 @@ export type BookAdaptationMatchResult = {
   unmatchedMovies: Movie[];
   unmatchedCount: number;
   sourceLookupCount: number;
-  googleBooksSearchCount: number;
+  bookLookupCount: number;
   adaptedMovieCount: number;
   searchedCount: number;
   totalMovies: number;
   lookupError?: string;
 };
 
-type FindSourceWorksForMovie = (movie: Movie) => Promise<WikidataSourceWork[]>;
-type SearchBooksForSourceWork = (sourceWork: WikidataSourceWork) => Promise<GoogleBook[]>;
+type FindSourceWorksForMovie = (movie: Movie) => Promise<SourceWork[]>;
+type SearchBooksForSourceWork = (sourceWork: SourceWork) => Promise<OpenLibraryBook[]>;
 
 type BookAdaptationMatcherOptions = {
   findSourceWorks?: FindSourceWorksForMovie;
   searchBooks?: SearchBooksForSourceWork;
 };
 
-type GoogleBookScore = {
-  book: GoogleBook;
-  sourceWork: WikidataSourceWork;
+type OpenLibraryBookScore = {
+  book: OpenLibraryBook;
+  sourceWork: SourceWork;
   confidence: MatchConfidence;
   matchedOn: BookAdaptationMatch["matchedOn"];
   score: number;
@@ -78,22 +76,22 @@ export async function matchBookAdaptations(
 ): Promise<BookAdaptationMatchResult> {
   const matches: BookAdaptationMatch[] = [];
   const unmatchedMovies: Movie[] = [];
-  const findSourceWorks = options.findSourceWorks ?? findWikidataSourceWorksForMovie;
-  const searchBooks = options.searchBooks ?? searchGoogleBooksForSourceWork;
+  const findSourceWorks = options.findSourceWorks ?? findSourceWorksForMovie;
+  const searchBooks = options.searchBooks ?? searchOpenLibraryForSourceWork;
   let sourceLookupCount = 0;
-  let googleBooksSearchCount = 0;
+  let bookLookupCount = 0;
   let adaptedMovieCount = 0;
   let lookupError: string | undefined;
 
   for (let index = 0; index < movies.length; index += 1) {
     const movie = movies[index];
-    let sourceWorks: WikidataSourceWork[];
+    let sourceWorks: SourceWork[];
 
     try {
       sourceWorks = await findSourceWorks(movie);
       sourceLookupCount += 1;
     } catch (error) {
-      lookupError = toLookupErrorMessage(error);
+      lookupError = toLookupErrorMessage(error, sourceLookupCount);
       unmatchedMovies.push(...movies.slice(index));
       break;
     }
@@ -108,19 +106,19 @@ export async function matchBookAdaptations(
     let shouldStop = false;
 
     for (const sourceWork of sourceWorks) {
-      let books: GoogleBook[];
+      let books: OpenLibraryBook[];
 
       try {
         books = await searchBooks(sourceWork);
-        googleBooksSearchCount += 1;
+        bookLookupCount += 1;
       } catch (error) {
-        lookupError = toLookupErrorMessage(error);
+        lookupError = toLookupErrorMessage(error, sourceLookupCount);
         unmatchedMovies.push(...movies.slice(index));
         shouldStop = true;
         break;
       }
 
-      const match = matchSourceWorkToGoogleBooks(movie, sourceWork, books);
+      const match = matchSourceWorkToOpenLibraryBooks(movie, sourceWork, books);
 
       if (match) {
         movieMatches.push(match);
@@ -144,23 +142,23 @@ export async function matchBookAdaptations(
     unmatchedMovies,
     unmatchedCount: unmatchedMovies.length,
     sourceLookupCount,
-    googleBooksSearchCount,
+    bookLookupCount,
     adaptedMovieCount,
-    searchedCount: googleBooksSearchCount,
+    searchedCount: bookLookupCount,
     totalMovies: movies.length,
     ...(lookupError ? { lookupError } : {})
   };
 }
 
-async function searchGoogleBooksForSourceWork(
-  sourceWork: WikidataSourceWork
-): Promise<GoogleBook[]> {
+async function searchOpenLibraryForSourceWork(
+  sourceWork: SourceWork
+): Promise<OpenLibraryBook[]> {
   const seenBookIds = new Set<string>();
-  const books: GoogleBook[] = [];
+  const books: OpenLibraryBook[] = [];
   const searches = [
-    () => searchGoogleBooksBySourceWork(sourceWork.title, sourceWork.authors),
+    () => searchOpenLibraryBySourceWork(sourceWork.title, sourceWork.authors),
     ...(sourceWork.authors.length > 0
-      ? [() => searchGoogleBooksByTitle(sourceWork.title)]
+      ? [() => searchOpenLibraryByTitle(sourceWork.title)]
       : [])
   ];
 
@@ -184,14 +182,14 @@ async function searchGoogleBooksForSourceWork(
   return books;
 }
 
-function matchSourceWorkToGoogleBooks(
+function matchSourceWorkToOpenLibraryBooks(
   movie: Movie,
-  sourceWork: WikidataSourceWork,
-  books: GoogleBook[]
+  sourceWork: SourceWork,
+  books: OpenLibraryBook[]
 ): ScoredBookAdaptationMatch | null {
   const scoredBooks = books
-    .map((book) => scoreGoogleBook(sourceWork, book))
-    .filter((score): score is GoogleBookScore => Boolean(score))
+    .map((book) => scoreOpenLibraryBook(sourceWork, book))
+    .filter((score): score is OpenLibraryBookScore => Boolean(score))
     .sort((first, second) => second.score - first.score);
 
   if (scoredBooks.length === 0) {
@@ -201,25 +199,24 @@ function matchSourceWorkToGoogleBooks(
   return buildMatch(movie, scoredBooks[0]);
 }
 
-function scoreGoogleBook(
-  sourceWork: WikidataSourceWork,
-  book: GoogleBook
-): GoogleBookScore | null {
+function scoreOpenLibraryBook(
+  sourceWork: SourceWork,
+  book: OpenLibraryBook
+): OpenLibraryBookScore | null {
   const sourceTitle = normalizeTitle(sourceWork.title);
   const bookTitle = normalizeTitle(book.title);
-  const fullBookTitle = normalizeTitle([book.title, book.subtitle].filter(Boolean).join(" "));
   const searchableBookText = normalizeTitle(
     [book.title, book.subtitle, book.description].filter(Boolean).join(" ")
   );
   const authorMatches = hasAuthorMatch(sourceWork.authors, book.authors);
-  const exactTitle = bookTitle === sourceTitle || fullBookTitle === sourceTitle;
+  const exactTitle = bookTitle === sourceTitle;
 
   if (exactTitle && authorMatches) {
     return {
       book,
       sourceWork,
       confidence: "high",
-      matchedOn: "wikidata-source-title-author",
+      matchedOn: "source-title-author",
       score: 120
     };
   }
@@ -229,19 +226,17 @@ function scoreGoogleBook(
       book,
       sourceWork,
       confidence: "high",
-      matchedOn: "wikidata-source-title",
+      matchedOn: "source-title",
       score: 110
     };
   }
 
-  if (startsWithTitle(fullBookTitle, sourceTitle)) {
+  if (startsWithTitle(bookTitle, sourceTitle)) {
     return {
       book,
       sourceWork,
       confidence: authorMatches ? "high" : "medium",
-      matchedOn: authorMatches
-        ? "wikidata-source-title-author"
-        : "wikidata-source-title",
+      matchedOn: authorMatches ? "source-title-author" : "source-title",
       score: authorMatches ? 100 : 90
     };
   }
@@ -251,7 +246,7 @@ function scoreGoogleBook(
       book,
       sourceWork,
       confidence: "medium",
-      matchedOn: "wikidata-source-containing-volume",
+      matchedOn: "source-containing-volume",
       score: authorMatches ? 85 : 75
     };
   }
@@ -261,14 +256,14 @@ function scoreGoogleBook(
 
 function buildMatch(
   movie: Movie,
-  score: GoogleBookScore
+  score: OpenLibraryBookScore
 ): ScoredBookAdaptationMatch {
   const sourceYear = getPublishedYear(score.sourceWork.publishedDate);
   const bookYear = sourceYear ?? getPublishedYear(score.book.publishedDate);
   const sourceAuthor = score.sourceWork.authors.join(", ") || "Unknown author";
 
   return {
-    id: `wikidata-${score.sourceWork.id}-google-books-${score.book.id}-${normalizeTitle(movie.title)}`,
+    id: `${score.sourceWork.sourceProvider}-${score.sourceWork.id}-open-library-${score.book.id}-${normalizeTitle(movie.title)}`,
     movie,
     sourceWork: score.sourceWork,
     adaptation: {
@@ -281,10 +276,8 @@ function buildMatch(
       bookAuthor: score.book.authors.join(", ") || sourceAuthor,
       ...(bookYear ? { bookYear } : {}),
       detail: getBookDetail(movie, score.sourceWork, score.book),
-      wikidataUrl: score.sourceWork.wikidataUrl,
-      ...(score.book.infoLink || score.book.previewLink
-        ? { googleBooksUrl: score.book.infoLink ?? score.book.previewLink }
-        : {})
+      sourceDataUrl: score.sourceWork.sourceDataUrl,
+      goodreadsUrl: score.book.goodreadsUrl
     },
     confidence: score.confidence,
     matchedOn: score.matchedOn,
@@ -298,27 +291,33 @@ function stripScore(match: ScoredBookAdaptationMatch): BookAdaptationMatch {
   return bookMatch;
 }
 
-function getMatchReason(score: GoogleBookScore): string {
-  if (score.matchedOn === "wikidata-source-title-author") {
-    return `Wikidata identifies "${score.sourceWork.title}" as the source work; Google Books matched the source title and author.`;
+function getMatchReason(score: OpenLibraryBookScore): string {
+  const provider = getSourceProviderLabel(score.sourceWork);
+
+  if (score.matchedOn === "source-title-author") {
+    return `${provider} identifies "${score.sourceWork.title}" as the source work; Open Library matched the source title and author.`;
   }
 
-  if (score.matchedOn === "wikidata-source-title") {
-    return `Wikidata identifies "${score.sourceWork.title}" as the source work; Google Books matched that source title.`;
+  if (score.matchedOn === "source-title") {
+    return `${provider} identifies "${score.sourceWork.title}" as the source work; Open Library matched that source title.`;
   }
 
-  return `Wikidata identifies "${score.sourceWork.title}" as the source work; Google Books matched it inside a containing volume.`;
+  return `${provider} identifies "${score.sourceWork.title}" as the source work; Open Library matched it inside a containing volume.`;
 }
 
 function getBookDetail(
   movie: Movie,
-  sourceWork: WikidataSourceWork,
-  book: GoogleBook
+  sourceWork: SourceWork,
+  book: OpenLibraryBook
 ): string {
   if (!book.description) {
+    const provider = getSourceProviderLabel(sourceWork);
     const author = sourceWork.authors.length > 0 ? ` by ${sourceWork.authors.join(", ")}` : "";
+    const goodreadsDetail = book.isGoodreadsSearchFallback
+      ? " The Goodreads link opens a search because Open Library did not expose a Goodreads identifier."
+      : " The Goodreads link uses an identifier exposed by Open Library.";
 
-    return `Wikidata identifies "${movie.title}" as based on "${sourceWork.title}"${author}. Google Books returned a matching book record.`;
+    return `${provider} identifies "${movie.title}" as based on "${sourceWork.title}"${author}. Open Library returned a matching book record.${goodreadsDetail}`;
   }
 
   const cleanedDescription = book.description
@@ -331,6 +330,10 @@ function getBookDetail(
   }
 
   return `${cleanedDescription.slice(0, 217).trim()}...`;
+}
+
+function getSourceProviderLabel(sourceWork: SourceWork): string {
+  return sourceWork.sourceProvider === "wikidata" ? "Wikidata" : "Wikipedia";
 }
 
 function getPublishedYear(publishedDate?: string): number | undefined {
@@ -423,14 +426,23 @@ function normalizeTitle(title: string): string {
     .replace(/\s+/g, " ");
 }
 
-function toLookupErrorMessage(error: unknown): string {
-  if (error instanceof GoogleBooksSearchException) {
-    return error.message;
+function toLookupErrorMessage(error: unknown, completedSourceChecks = 0): string {
+  const partialPrefix =
+    completedSourceChecks > 0
+      ? `Showing partial results after ${completedSourceChecks} source checks. `
+      : "";
+
+  if (error instanceof OpenLibrarySearchException) {
+    return `${partialPrefix}${error.message}`;
+  }
+
+  if (error instanceof SourceLookupException) {
+    return `${partialPrefix}${error.message}`;
   }
 
   if (error instanceof WikidataSourceLookupException) {
-    return error.message;
+    return `${partialPrefix}${error.message}`;
   }
 
-  return "Adaptation lookup failed before every imported movie could be searched.";
+  return `${partialPrefix}Adaptation lookup failed before every imported movie could be searched.`;
 }

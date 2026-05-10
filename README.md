@@ -2,7 +2,7 @@
 
 V1 app for a tool that accepts a Letterboxd username, imports public movie activity, and matches those movies to books they were adapted from.
 
-Flow: user enters Letterboxd username -> app imports normalized films -> checks Wikidata for book-adaptation source works -> searches Google Books for the identified source title and author -> displays likely source-book matches with confidence and match details.
+Flow: user enters Letterboxd username -> app imports normalized films -> checks Wikipedia film source metadata for book-adaptation source works -> searches Open Library for the identified source title and author -> displays likely source-book matches with Goodreads links, confidence, and match details.
 
 This version is intentionally small. It does not include auth, a database, saved reading lists, or LLM calls.
 
@@ -24,11 +24,21 @@ npm run dev
 
 Open `http://localhost:3000` in your browser.
 
-Google Books lookups can run without user authentication. For reliable local quota,
-add a server-side API key to `.env.local`:
+Wikipedia and Open Library lookups run without user authentication. Goodreads is
+linked only as an outbound destination; the app does not scrape Goodreads.
+
+To allow Wikidata as a fallback source lookup when Wikipedia does not identify a
+source work, add this server-side flag to `.env.local`:
 
 ```bash
-GOOGLE_BOOKS_API_KEY=your-google-books-api-key
+WIKIDATA_SOURCE_LOOKUP_ENABLED=true
+```
+
+Wikipedia lookups use likely film page titles first to keep request volume low.
+If you want a broader but noisier Wikipedia search fallback, you can also set:
+
+```bash
+WIKIPEDIA_SEARCH_FALLBACK_ENABLED=true
 ```
 
 Run tests:
@@ -42,9 +52,11 @@ npm test
 - Landing page with Letterboxd username input
 - Server-side Letterboxd import route at `/api/letterboxd/import`
 - Letterboxd RSS import with normalized movie output
-- Wikidata source-work lookup before Google Books search
-- Google Books search by identified source title and author
-- In-memory server cache for repeated Wikidata and Google Books lookups
+- Wikipedia source-work lookup before Open Library search
+- Open Library search by identified source title and author
+- Goodreads outbound links from Open Library identifiers or search fallback
+- Optional Wikidata fallback behind `WIKIDATA_SOURCE_LOOKUP_ENABLED=true`
+- In-memory server cache for repeated Wikipedia and Open Library lookups
 - Matched results page at `/results/[username]`
 - Unmatched movie counts and empty states
 - Parser and matching tests with Node's built-in test runner

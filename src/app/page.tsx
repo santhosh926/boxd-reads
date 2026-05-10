@@ -88,7 +88,7 @@ export default function Home() {
               {[
                 "Fetch public activity",
                 "Find source works",
-                "Match Google Books"
+                "Link Goodreads"
               ].map((title, index) => (
                   <div className="flex items-center gap-4" key={title}>
                     <span className="flex h-11 w-11 items-center justify-center rounded-md bg-clay text-sm font-bold">
